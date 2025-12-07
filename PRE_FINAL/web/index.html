@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Pipeline Map</title>
+    <style>
+        body { background: #111; color: white; font-family: sans-serif; margin: 0; }
+        #controls { padding: 10px; background: #222; display: flex; gap: 10px; }
+        #mapCanvas { display: block; margin: 0 auto; border: 1px solid #555; background: black; }
+        #junctionList { padding: 10px; background: #222; max-height: 200px; overflow-y: auto; }
+        button { padding: 6px 12px; background: #555; color: white; border: none; cursor: pointer; }
+        button:hover { background: #777; }
+        li { margin-bottom: 2px; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <button id="startBtn">Start Mission</button>
+    <button id="stopBtn">Stop Mission</button>
+    <button id="killBtn">Kill Switch</button>
+</div>
+
+<canvas id="mapCanvas" width="1200" height="900"></canvas>
+
+<div id="junctionList">
+    <h3>Found Junctions:</h3>
+    <ul id="junctionsUl"></ul>
+</div>
+
+<script src="js/roslib.js"></script>
+<script src="js/viz.js"></script>
+<script src="js/mission_controls.js"></script>
+
+</body>
+</html>
