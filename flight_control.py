@@ -9,8 +9,8 @@ from std_srvs.srv import Trigger
 from clover.srv import SetLEDEffect
 from visualization_msgs.msg import Marker
 
-EXPLORATION_SPEED = 0.5
-EXPLORATION_HEIGHT = 1.7
+EXPLORATION_SPEED = 0.4
+EXPLORATION_HEIGHT = 1.8
 HOME_POS = {'x': 0.0, 'y': 0.0, 'z': EXPLORATION_HEIGHT}
 JUNCTION_RADIUS = 0.4
 MAX_JUNCTIONS_TO_FIND = 5

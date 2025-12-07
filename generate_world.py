@@ -26,11 +26,11 @@ SEGMENT_INSET = 0.03
 
 # --- PIPELINE MODEL GENERATOR ---
 def generate_pipeline_model_sdf():
-    L_main = random.uniform(5.0, 8.0)
+    L_main = random.uniform(5.0, 7.0)
 
     yaw1 = math.radians(random.uniform(0, 90))
 
-    bend_angle = math.radians(random.uniform(-30, 30))
+    bend_angle = math.radians(random.uniform(-20, 20))
 
     t_bend = random.uniform(0.3 * L_main, 0.7 * L_main)
 
@@ -71,7 +71,7 @@ def generate_pipeline_model_sdf():
         side = random.choice([-1, 1])
         branch_dir = np.array([-dir_vec[1] * side, dir_vec[0] * side, 0.0])
 
-        L_branch = random.uniform(0.5, 2.0)
+        L_branch = random.uniform(1.5, 2.0)
 
         branches.append({
             "start": P,

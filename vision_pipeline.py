@@ -6,18 +6,21 @@ import numpy as np
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
 from visualization_msgs.msg import Marker
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, String
 from geometry_msgs.msg import Point
 from clover import srv, long_callback
 from skimage.morphology import medial_axis
 from collections import deque
+import json
 
 
 MIN_JUNCTION_AREA = 1
 PRUNE_MIN_LENGTH = 30
 
-BRANCH_STABILITY_FRAMES = 30
-BRANCH_MAX_DIST = 0.60
+# --- constants ---
+BRANCH_TIME_WINDOW = 100
+MIN_HIT_FREQUENCY = 0.4
+MERGE_DIST = 0.35
 
 branch_candidates = []
 
@@ -30,6 +33,13 @@ fx = fy = cx = cy = None
 global_map_pub = rospy.Publisher("pipeline_global_map", Marker, queue_size=1)
 global_junctions_pub = rospy.Publisher("pipeline_global_junctions", Marker, queue_size=1)
 global_mask_pub = rospy.Publisher("pipeline_global_mask", Marker, queue_size=1)
+
+bridge = CvBridge()
+pub_mask = rospy.Publisher('/debug/mask', Image, queue_size=1)
+pub_skeleton = rospy.Publisher('/debug/skeleton', Image, queue_size=1)
+pub_junctions = rospy.Publisher('/debug/junctions', Image, queue_size=1)
+
+tubes_pub = rospy.Publisher("tubes", String, queue_size=1)
 
 global_map_pipe = []
 global_map_skeleton = []
@@ -122,32 +132,54 @@ def find_junctions_and_degrees(skel_bool):
 
     return junctions
 
-def stabilize_branches(detected_points):
-    global branch_candidates
 
+def stabilize_branches(detected_points):
+    """Стабилизирует обнаруженные точки веток (трекинг, фильтрация по частоте и объединение)."""
+    global branch_candidates, frame_counter
+    frame_counter += 1
+
+    # --- 1. Обновляем кандидатов (Трекинг) ---
     for pt in detected_points:
         matched = False
-
         for c in branch_candidates:
-            if point_dist(pt, c["pos"]) < BRANCH_MAX_DIST:
-                c["history"].append(pt)
-                if len(c["history"]) > BRANCH_STABILITY_FRAMES:
-                    c["history"].popleft()
+            # Точка должна попасть в радиус MERGE_DIST вокруг фиксированной позиции кандидата (первого попадания)
+            if point_dist(pt, c["pos"]) < MERGE_DIST:
+                # Точка попадает в область ветки -> добавляем текущий кадр
+                c["history"].append(frame_counter)
+                # Позиция c["pos"] (позиция первого попадания) остается фиксированной
                 matched = True
                 break
-
+        
         if not matched:
+            # Новый кандидат: pos устанавливается как позиция первого попадания и фиксируется
             branch_candidates.append({
                 "pos": Point(pt.x, pt.y, pt.z),
-                "history": deque([pt], maxlen=BRANCH_STABILITY_FRAMES)
+                "history": deque([frame_counter], maxlen=BRANCH_TIME_WINDOW)
             })
 
+    # --- 2. Выбираем стабильные ветки по частоте ---
     stable = []
     for c in branch_candidates:
-        if len(c["history"]) >= BRANCH_STABILITY_FRAMES:
+        # Считаем попадания в текущем временном окне
+        hits_in_window = [
+            f for f in c["history"] 
+            if f > frame_counter - BRANCH_TIME_WINDOW
+        ]
+        
+        # Частота попаданий
+        frequency = len(hits_in_window) / BRANCH_TIME_WINDOW
+        
+        if frequency >= MIN_HIT_FREQUENCY:
             stable.append(c["pos"])
 
-    return stable
+    # --- 3. Объединяем близкие точки ---
+    merged_stable = []
+    for pt in stable:
+        # Проверяем, находится ли точка достаточно далеко от уже объединенных
+        if all(point_dist(pt, m) > MERGE_DIST for m in merged_stable):
+            merged_stable.append(pt)
+
+    return merged_stable
 
 
 def prune_junction_branches(skel_bool, min_length=PRUNE_MIN_LENGTH):
@@ -274,11 +306,21 @@ def project_points(coords_2d, telem, R, img=None, target_z=0):
 
     return marker
 
-# ----- global map helpers -----
 def quantize_point(pt, step=0.05):
     return (round(pt.x / step) * step,
             round(pt.y / step) * step,
             round(pt.z / step) * step)
+
+def publish_tubes_json(global_map_junctions):
+    points_list = [{"x": round(pt.x, 3),
+                    "y": round(pt.y, 3),
+                    "z": round(pt.z, 3)} 
+                   for pt in global_map_junctions]
+
+    json_str = json.dumps({"junctions": points_list})
+
+    tubes_pub.publish(String(data=json_str))
+
 
 def add_to_global_map(marker_points, global_list, occ_set, step=0.05):
     for pt in marker_points:
@@ -297,10 +339,6 @@ def publish_global_maps():
     m.scale.x = m.scale.y = 0.03
     m.color = ColorRGBA(0.0, 1.0, 0.0, 1.0)
     m.points = global_map_skeleton
-    m.pose.orientation.w = 1.0
-    m.pose.orientation.x = 0.0
-    m.pose.orientation.y = 0.0
-    m.pose.orientation.z = 0.0
     global_map_pub.publish(m)
 
     # mask map
@@ -311,10 +349,6 @@ def publish_global_maps():
     mm.scale.x = mm.scale.y = 0.015
     mm.color = ColorRGBA(1.0, 1.0, 1.0, 1.0)
     mm.points = global_map_pipe
-    mm.pose.orientation.w = 1.0
-    mm.pose.orientation.x = 0.0
-    mm.pose.orientation.y = 0.0
-    mm.pose.orientation.z = 0.0
     global_mask_pub.publish(mm)
 
     # junctions
@@ -325,11 +359,11 @@ def publish_global_maps():
     j.scale.x = j.scale.y = j.scale.z = 0.5
     j.color = ColorRGBA(1.0, 0.0, 0.0, 1)
     j.points = global_map_junctions
-    j.pose.orientation.w = 1.0
-    j.pose.orientation.x = 0.0
-    j.pose.orientation.y = 0.0
-    j.pose.orientation.z = 0.0
     global_junctions_pub.publish(j)
+
+    publish_tubes_json(global_map_junctions)
+
+
 
 # ----- main processing -----
 @long_callback
@@ -344,23 +378,34 @@ def analyze_and_publish(img):
     upper_color = np.array([179, 255, 100])
     mask = cv2.inRange(hsv, lower_color, upper_color)
 
-    kernel = np.ones((2, 2), np.uint8)
-    mask = cv2.erode(mask, kernel, iterations=2)
+    # kernel = np.ones((2, 2), np.uint8)
+    # mask = cv2.erode(mask, kernel, iterations=3)
 
-    coords_mask = np.argwhere(mask > 0)
+    pub_mask.publish(bridge.cv2_to_imgmsg(mask, encoding="mono8"))
 
     skeleton_bool, _ = medial_axis(mask > 0, return_distance=True)
-
     skeleton_pruned_bool = prune_junction_branches(skeleton_bool, min_length=PRUNE_MIN_LENGTH)
-    skeleton_pruned = skeleton_pruned_bool.astype(np.uint8)
-    coords_skeleton = np.argwhere(skeleton_pruned > 0)
+    skeleton_pruned = skeleton_pruned_bool.astype(np.uint8) * 255
+
+    pub_skeleton.publish(bridge.cv2_to_imgmsg(skeleton_pruned, encoding="mono8"))
+
 
     junctions_data = find_junctions_and_degrees(skeleton_pruned_bool)
     coords_branches = np.array([j['centroid'] for j in junctions_data]) if len(junctions_data) > 0 else np.zeros((0,2),dtype=int)
 
+    img_junctions = img.copy()
+    for x, y in coords_branches:
+        cv2.circle(img_junctions, (y, x), 3, (0,0,255), -1)  # note: coords are (row,col)
+
+    pub_junctions.publish(bridge.cv2_to_imgmsg(img_junctions, encoding="bgr8"))
+
+    # --- остальная часть твоего кода ---
     telem = get_telemetry(frame_id="aruco_map")
     roll, pitch, yaw = telem.roll, telem.pitch, telem.yaw
     R = create_rotation_matrix(roll, pitch, yaw)
+
+    coords_skeleton = np.argwhere(skeleton_pruned_bool > 0)
+    coords_mask = np.argwhere(mask > 0)
 
     if len(coords_skeleton) > 0:
         skeleton_marker = project_points(coords_skeleton, telem, R)
@@ -374,7 +419,6 @@ def analyze_and_publish(img):
     rospy.logdebug(f"junctions found: {len(coords_branches)}")
     if len(coords_branches) > 0:
         branches_marker = project_points(coords_branches, telem, R)
-        # --- STABILIZE BRANCHES ---
         stable_junctions = stabilize_branches(branches_marker.points)
         branches_marker.points = stable_junctions
         add_to_global_map(branches_marker.points, global_map_junctions, occ_junctions, step=0.05)

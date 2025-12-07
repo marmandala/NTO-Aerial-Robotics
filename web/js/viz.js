@@ -8,7 +8,7 @@ ros.on('close', function() { console.log('ROS disconnected'); });
 
 const canvas = document.getElementById('mapCanvas');
 canvas.width = 1200;
-canvas.height = 900;
+canvas.height = 1200;
 const ctx = canvas.getContext('2d');
 const scale = 110;
 function drawPoints(points, color, size=6, shape='rect') {
@@ -65,7 +65,7 @@ function render() {
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    if(maskPoints.length>0) drawPoints(maskPoints, 'white', 4, 'rect');
+    if(maskPoints.length>0) drawPoints(maskPoints, 'white', 5, 'rect');
 
-    if(junctionPoints.length>0) drawPoints(junctionPoints, 'red', 40, 'circle');
+    if(junctionPoints.length>0) drawPoints(junctionPoints, 'red', 50, 'circle');
 }
