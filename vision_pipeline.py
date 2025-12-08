@@ -17,15 +17,17 @@ from threading import Lock
 
 global_data_lock = Lock()
 
+# Параметры для фильтрации
 MIN_JUNCTION_AREA = 1
 PRUNE_MIN_LENGTH = 20
 
-# --- constants ---
+# Параметры для детекции врезок
 BRANCH_TIME_WINDOW = 150
 MIN_HIT_FREQUENCY = 0.5
 MERGE_DIST = 0.7
 FREEZE_COUNT = 60
 
+# Временный буфер кандидатов
 branch_candidates = []
 
 rospy.init_node('vision_pipeline')
@@ -35,15 +37,19 @@ get_telemetry = rospy.ServiceProxy('get_telemetry', srv.GetTelemetry)
 
 fx = fy = cx = cy = None
 
+# Паблишеры карты
 global_map_pub = rospy.Publisher("pipeline_global_map", Marker, queue_size=1)
 global_junctions_pub = rospy.Publisher("pipeline_global_junctions", Marker, queue_size=1)
 global_mask_pub = rospy.Publisher("pipeline_global_mask", Marker, queue_size=1)
 
+
+# Паблишеры отладочных изображений
 bridge = CvBridge()
 pub_mask = rospy.Publisher('/debug/mask', Image, queue_size=1)
 pub_skeleton = rospy.Publisher('/debug/skeleton', Image, queue_size=1)
 pub_junctions = rospy.Publisher('/debug/junctions', Image, queue_size=1)
 
+# Паблишер для информации о врезках
 tubes_pub = rospy.Publisher("tubes", String, queue_size=1)
 
 global_map_pipe = []
@@ -72,6 +78,10 @@ def neighbors(skel, y, x, h, w):
     return nbrs
 
 def find_junctions_and_degrees(skel_bool):
+    """
+    Находит узлы на бинарном скелете и определяет количество веток у каждого узла.
+    """
+
     skel = skel_bool.astype(np.uint8)
     h, w = skel.shape
     kernel = np.array([[1,1,1],[1,0,1],[1,1,1]], dtype=np.uint8)
@@ -397,6 +407,7 @@ def publish_global_maps():
 def analyze_and_publish(img):
     global fx, fy, cx, cy, frame_counter
 
+    # Проверяем, включён ли vision pipeline
     if not rospy.get_param('/vision_pipeline/enabled', False):
         rospy.logdebug_throttle(5, "Vision pipeline is currently disabled.")
         publish_global_maps()
@@ -405,6 +416,7 @@ def analyze_and_publish(img):
     if fx is None:
         return
 
+    # Преобразуем картинку в HSV и применяем цветовую маску
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     lower_color = np.array([0, 0, 10])
     upper_color = np.array([179, 255, 100])
@@ -415,13 +427,17 @@ def analyze_and_publish(img):
 
     pub_mask.publish(bridge.cv2_to_imgmsg(mask, encoding="mono8"))
 
+    # Строим скелет маски
     skeleton_bool, _ = medial_axis(mask > 0, return_distance=True)
+
+    # "Подчищаем" скелет
     skeleton_pruned_bool = prune_junction_branches(skeleton_bool, min_length=PRUNE_MIN_LENGTH)
     skeleton_pruned = skeleton_pruned_bool.astype(np.uint8) * 255
 
     pub_skeleton.publish(bridge.cv2_to_imgmsg(skeleton_pruned, encoding="mono8"))
 
 
+    # Находим точки предполагаемых врезок
     junctions_data = find_junctions_and_degrees(skeleton_pruned_bool)
     coords_branches = np.array([j['centroid'] for j in junctions_data]) if len(junctions_data) > 0 else np.zeros((0,2),dtype=int)
 
@@ -431,23 +447,29 @@ def analyze_and_publish(img):
 
     pub_junctions.publish(bridge.cv2_to_imgmsg(img_junctions, encoding="bgr8"))
 
+    # Получаем телеметрию дрона в aruco_map
     telem = get_telemetry(frame_id="aruco_map")
     roll, pitch, yaw = telem.roll, telem.pitch, telem.yaw
     R = create_rotation_matrix(roll, pitch, yaw)
 
+    # Получаем пиксельные координаты скелета и маски
     coords_skeleton = np.argwhere(skeleton_pruned_bool > 0)
     coords_mask = np.argwhere(mask > 0)
 
+    # Проецируем скелет в глобальную карту
     if len(coords_skeleton) > 0:
         skeleton_marker = project_points(coords_skeleton, telem, R)
         add_to_global_map(skeleton_marker.points, global_map_skeleton, occ_skeleton, step=0.05)
 
+    # Проецируем маску в глобальную карту
     if len(coords_mask) > 0:
         mask_coords_sampled = coords_mask[::2]
         mask_marker = project_points(mask_coords_sampled, telem, R, img)
         add_to_global_map(mask_marker.points, global_map_pipe, occ_pipe, step=0.05)
 
     rospy.logdebug(f"junctions found: {len(coords_branches)}")
+
+    # Проецируем развилки, стабилизируем их и добавляем в карту
     if len(coords_branches) > 0:
         branches_marker = project_points(coords_branches, telem, R)
         stable_junctions = stabilize_branches(branches_marker.points)
@@ -455,6 +477,7 @@ def analyze_and_publish(img):
         add_to_global_map(branches_marker.points, global_map_junctions, occ_junctions, step=0.05)
 
     frame_counter += 1
+
     if frame_counter % 2 == 0:
         publish_global_maps()
 

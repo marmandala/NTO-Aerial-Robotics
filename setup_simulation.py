@@ -78,7 +78,7 @@ def modify_launch_file(filename, directory, updates):
         print(f"[{filename}] [ERROR] Не удалось распарсить: {e}")
 
 def main():
-    print("--- Настройка окружения Clover (3 файла) ---")
+    print("--- Настройка окружения Clover ---")
     
     for filename, config in CONFIGS.items():
         modify_launch_file(filename, config['dir'], config['updates'])
