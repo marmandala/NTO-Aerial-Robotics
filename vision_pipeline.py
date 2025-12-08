@@ -149,7 +149,7 @@ def find_junctions_and_degrees(skel_bool):
 
 
 def calculate_centroid(points):
-    """Вычисляет центроид (среднее) для списка объектов Point."""
+    """Вычисляет центроид для списка объектов Point."""
     if not points:
         return None 
     
@@ -481,7 +481,7 @@ def analyze_and_publish(img):
     if frame_counter % 2 == 0:
         publish_global_maps()
 
-# ----- ROS callbacks -----
+# ----- ROS колбэки -----
 @long_callback
 def image_callback(data):
     try:

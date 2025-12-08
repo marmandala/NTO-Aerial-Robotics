@@ -1,4 +1,4 @@
-# NTO Aerial Robotics — README
+# NTO Aerial Robotics
 
 
 ## 0. Установка симулятора Clover
