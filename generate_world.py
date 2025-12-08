@@ -28,7 +28,7 @@ SEGMENT_INSET = 0.03
 def generate_pipeline_model_sdf():
     L_main = random.uniform(5.0, 7.0)
 
-    yaw1 = math.radians(random.uniform(0, 90))
+    yaw1 = math.radians(random.uniform(40, 50))
 
     bend_angle = math.radians(random.uniform(-20, 20))
 

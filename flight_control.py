@@ -10,14 +10,14 @@ from clover.srv import SetLEDEffect
 from visualization_msgs.msg import Marker
 
 EXPLORATION_SPEED = 0.4
-EXPLORATION_HEIGHT = 1.8
+EXPLORATION_HEIGHT = 1.7
 HOME_POS = {'x': 0.0, 'y': 0.0, 'z': EXPLORATION_HEIGHT}
 JUNCTION_RADIUS = 0.4
 MAX_JUNCTIONS_TO_FIND = 5
 
 global_junction_points = []
 
-rospy.init_node('pipeline_control')
+rospy.init_node('flight_control')
 
 get_telemetry = rospy.ServiceProxy('get_telemetry', srv.GetTelemetry)
 navigate = rospy.ServiceProxy('navigate', srv.Navigate)
@@ -118,6 +118,7 @@ def main():
 
         # --- START ---
         if cmd == 'start':
+
             rospy.loginfo("Taking off...")
             set_effect(effect='rainbow')
             
@@ -126,6 +127,14 @@ def main():
 
             if not navigate_interruptible(1, 1, EXPLORATION_HEIGHT, frame_id='aruco_map'):
                 continue
+            
+            VISION_ENABLE_PARAM = '/vision_pipeline/enabled'
+            try:
+                rospy.set_param(VISION_ENABLE_PARAM, True)
+                time.sleep(1.5)
+                rospy.loginfo(f"Vision Pipeline enabled for exploration.")
+            except Exception as e:
+                rospy.logerr(f"Failed to set ROS parameter {VISION_ENABLE_PARAM}: {e}")
 
             while get_mission_command() == 'start' and len(explored) < MAX_JUNCTIONS_TO_FIND:
                 telem = get_telemetry(frame_id='aruco_map')
@@ -150,6 +159,14 @@ def main():
 
             if get_mission_command() != 'start':
                 continue
+
+            VISION_ENABLE_PARAM = '/vision_pipeline/enabled'
+            try:
+                rospy.set_param(VISION_ENABLE_PARAM, False)
+                rospy.loginfo(f"Vision Pipeline disabled.")
+            except Exception as e:
+                rospy.logerr(f"Failed to set ROS parameter {VISION_ENABLE_PARAM}: {e}")
+            # -----------------------------------------------------------------
 
             rospy.loginfo("Mission complete. Returning home.")
             if not navigate_interruptible(HOME_POS['x'], HOME_POS['y'], HOME_POS['z'], speed=0.8):

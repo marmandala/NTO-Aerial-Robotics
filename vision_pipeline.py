@@ -12,19 +12,24 @@ from clover import srv, long_callback
 from skimage.morphology import medial_axis
 from collections import deque
 import json
+from threading import Lock
 
+
+global_data_lock = Lock()
 
 MIN_JUNCTION_AREA = 1
-PRUNE_MIN_LENGTH = 30
+PRUNE_MIN_LENGTH = 20
 
 # --- constants ---
 BRANCH_TIME_WINDOW = 100
-MIN_HIT_FREQUENCY = 0.50
-MERGE_DIST = 0.4
+MIN_HIT_FREQUENCY = 0.5
+MERGE_DIST = 0.7
+FREEZE_COUNT = 40
 
 branch_candidates = []
 
-rospy.init_node('pipeline_mask_to_rviz')
+rospy.init_node('vision_pipeline')
+rospy.set_param('/vision_pipeline/enabled', False)
 bridge = CvBridge()
 get_telemetry = rospy.ServiceProxy('get_telemetry', srv.GetTelemetry)
 
@@ -133,49 +138,87 @@ def find_junctions_and_degrees(skel_bool):
     return junctions
 
 
+def calculate_centroid(points):
+    """Вычисляет центроид (среднее) для списка объектов Point."""
+    if not points:
+        # Возвращаем None или Point(0,0,0) в зависимости от нужной обработки
+        return None 
+    
+    N = len(points)
+    sum_x = sum(p.x for p in points)
+    sum_y = sum(p.y for p in points)
+    sum_z = sum(p.z for p in points)
+    
+    return Point(sum_x / N, sum_y / N, sum_z / N)
+
+
+# --- ГЛАВНАЯ ФУНКЦИЯ ---
+
 def stabilize_branches(detected_points):
     """Стабилизирует обнаруженные точки веток (трекинг, фильтрация по частоте и объединение)."""
-    global branch_candidates, frame_counter
+    
+    # Предполагаем, что branch_candidates и frame_counter доступны глобально
+    global branch_candidates, frame_counter 
     frame_counter += 1
 
-    # --- 1. Обновляем кандидатов (Трекинг) ---
+    # -----------------------------------------------------
+    ## 1. Обновляем кандидатов (Трекинг и Заморозка Центроида)
+    # -----------------------------------------------------
     for pt in detected_points:
         matched = False
         for c in branch_candidates:
-            # Точка должна попасть в радиус MERGE_DIST вокруг фиксированной позиции кандидата (первого попадания)
+            # Матчинг: Если точка близка к c["pos"], она привязывается к существующему кандидату.
             if point_dist(pt, c["pos"]) < MERGE_DIST:
-                # Точка попадает в область ветки -> добавляем текущий кадр
                 c["history"].append(frame_counter)
-                # Позиция c["pos"] (позиция первого попадания) остается фиксированной
+                
+                if c["is_frozen"]:
+                    pass 
+                else:
+                    c["temp_hits"].append(pt) 
+                    
+                    if len(c["temp_hits"]) >= FREEZE_COUNT:
+                        c["pos"] = calculate_centroid(c["temp_hits"])
+                        c["is_frozen"] = True
+                        c["temp_hits"].clear()
+                    else:
+                        c["pos"] = calculate_centroid(c["temp_hits"])
+                        
                 matched = True
                 break
         
+        # ЕСЛИ matched == False:
+        # Это означает, что pt находится ДАЛЕКО от ВСЕХ существующих c["pos"]. 
+        # Только в этом случае создается новый кандидат.
         if not matched:
-            # Новый кандидат: pos устанавливается как позиция первого попадания и фиксируется
             branch_candidates.append({
                 "pos": Point(pt.x, pt.y, pt.z),
-                "history": deque([frame_counter], maxlen=BRANCH_TIME_WINDOW)
+                "history": deque([frame_counter], maxlen=BRANCH_TIME_WINDOW),
+                "temp_hits": deque([pt], maxlen=FREEZE_COUNT),
+                "is_frozen": False
             })
 
-    # --- 2. Выбираем стабильные ветки по частоте ---
+    # -----------------------------------------------------
+    ## 2. Выбираем стабильные ветки по частоте
+    # -----------------------------------------------------
     stable = []
     for c in branch_candidates:
-        # Считаем попадания в текущем временном окне
         hits_in_window = [
             f for f in c["history"] 
             if f > frame_counter - BRANCH_TIME_WINDOW
         ]
         
-        # Частота попаданий
         frequency = len(hits_in_window) / BRANCH_TIME_WINDOW
         
         if frequency >= MIN_HIT_FREQUENCY:
-            stable.append(c["pos"])
+            stable.append(c["pos"]) 
 
-    # --- 3. Объединяем близкие точки ---
+    # -----------------------------------------------------
+    ## 3. Объединяем близкие точки (Финальная очистка дубликатов)
+    # -----------------------------------------------------
     merged_stable = []
     for pt in stable:
-        # Проверяем, находится ли точка достаточно далеко от уже объединенных
+        # Этот шаг гарантирует, что даже если два кандидата сблизились, 
+        # только один из них попадет в финальный список.
         if all(point_dist(pt, m) > MERGE_DIST for m in merged_stable):
             merged_stable.append(pt)
 
@@ -322,46 +365,47 @@ def publish_tubes_json(global_map_junctions):
     tubes_pub.publish(String(data=json_str))
 
 
-def add_to_global_map(marker_points, global_list, occ_set, step=0.05):
-    for pt in marker_points:
-        q = quantize_point(pt, step)
-        if q not in occ_set:
-            occ_set.add(q)
-            global_list.append(pt)
+def add_to_global_map(points, global_list, occ_set, step):
+    with global_data_lock: 
+        for point in points:
+            q = quantize_point(point, step)
+            if q not in occ_set:
+                occ_set.add(q)
+                global_list.append(point)
 
 def publish_global_maps():
+    with global_data_lock:
+        # skeleton map
+        m = Marker()
+        m.header.frame_id = "aruco_map"
+        m.header.stamp = rospy.Time.now()
+        m.type = Marker.POINTS
+        m.scale.x = m.scale.y = 0.03
+        m.color = ColorRGBA(0.0, 1.0, 0.0, 1.0)
+        m.points = global_map_skeleton
+        global_map_pub.publish(m)
 
-    # skeleton map
-    m = Marker()
-    m.header.frame_id = "aruco_map"
-    m.header.stamp = rospy.Time.now()
-    m.type = Marker.POINTS
-    m.scale.x = m.scale.y = 0.03
-    m.color = ColorRGBA(0.0, 1.0, 0.0, 1.0)
-    m.points = global_map_skeleton
-    global_map_pub.publish(m)
+        # mask map
+        mm = Marker()
+        mm.header.frame_id = "aruco_map"
+        mm.header.stamp = rospy.Time.now()
+        mm.type = Marker.POINTS
+        mm.scale.x = mm.scale.y = 0.015
+        mm.color = ColorRGBA(1.0, 1.0, 1.0, 1.0)
+        mm.points = global_map_pipe
+        global_mask_pub.publish(mm)
 
-    # mask map
-    mm = Marker()
-    mm.header.frame_id = "aruco_map"
-    mm.header.stamp = rospy.Time.now()
-    mm.type = Marker.POINTS
-    mm.scale.x = mm.scale.y = 0.015
-    mm.color = ColorRGBA(1.0, 1.0, 1.0, 1.0)
-    mm.points = global_map_pipe
-    global_mask_pub.publish(mm)
+        # junctions
+        j = Marker()
+        j.header.frame_id = "aruco_map"
+        j.header.stamp = rospy.Time.now()
+        j.type = Marker.CUBE_LIST
+        j.scale.x = j.scale.y = j.scale.z = 0.5
+        j.color = ColorRGBA(1.0, 0.0, 0.0, 1)
+        j.points = global_map_junctions
+        global_junctions_pub.publish(j)
 
-    # junctions
-    j = Marker()
-    j.header.frame_id = "aruco_map"
-    j.header.stamp = rospy.Time.now()
-    j.type = Marker.CUBE_LIST
-    j.scale.x = j.scale.y = j.scale.z = 0.5
-    j.color = ColorRGBA(1.0, 0.0, 0.0, 1)
-    j.points = global_map_junctions
-    global_junctions_pub.publish(j)
-
-    publish_tubes_json(global_map_junctions)
+        publish_tubes_json(global_map_junctions)
 
 
 
@@ -369,6 +413,11 @@ def publish_global_maps():
 @long_callback
 def analyze_and_publish(img):
     global fx, fy, cx, cy, frame_counter
+
+    if not rospy.get_param('/vision_pipeline/enabled', False):
+        rospy.logdebug_throttle(5, "Vision pipeline is currently disabled.")
+        publish_global_maps()
+        return
 
     if fx is None:
         return
@@ -378,8 +427,8 @@ def analyze_and_publish(img):
     upper_color = np.array([179, 255, 100])
     mask = cv2.inRange(hsv, lower_color, upper_color)
 
-    # kernel = np.ones((2, 2), np.uint8)
-    # mask = cv2.erode(mask, kernel, iterations=3)
+    kernel = np.ones((2, 2), np.uint8)
+    mask = cv2.erode(mask, kernel, iterations=1)
 
     pub_mask.publish(bridge.cv2_to_imgmsg(mask, encoding="mono8"))
 

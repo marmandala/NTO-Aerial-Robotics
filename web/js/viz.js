@@ -65,7 +65,7 @@ function render() {
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    if(maskPoints.length>0) drawPoints(maskPoints, 'white', 5, 'rect');
+    if(maskPoints.length>0) drawPoints(maskPoints, 'white', 6, 'rect');
 
     if(junctionPoints.length>0) drawPoints(junctionPoints, 'red', 50, 'circle');
 }
