@@ -19,8 +19,8 @@ PRUNE_MIN_LENGTH = 30
 
 # --- constants ---
 BRANCH_TIME_WINDOW = 100
-MIN_HIT_FREQUENCY = 0.4
-MERGE_DIST = 0.35
+MIN_HIT_FREQUENCY = 0.50
+MERGE_DIST = 0.4
 
 branch_candidates = []
 
