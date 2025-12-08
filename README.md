@@ -57,3 +57,13 @@ python3 main_controller.py
 * Кнопки управления миссией (Start Mission, Stop Mission, Kill Switch)
 
 ---
+
+## Видео прохождения миссии
+
+<video width="600" controls>
+  <source src="work_video.mp4" type="video/mp4">
+  Ваш браузер не поддерживает просмотр видео.
+</video>
+
+### Ссылка на видео
+[work_video.mp4](work_video.mp4)
