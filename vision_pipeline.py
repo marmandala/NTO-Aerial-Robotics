@@ -141,7 +141,6 @@ def find_junctions_and_degrees(skel_bool):
 def calculate_centroid(points):
     """Вычисляет центроид (среднее) для списка объектов Point."""
     if not points:
-        # Возвращаем None или Point(0,0,0) в зависимости от нужной обработки
         return None 
     
     N = len(points)
@@ -152,22 +151,17 @@ def calculate_centroid(points):
     return Point(sum_x / N, sum_y / N, sum_z / N)
 
 
-# --- ГЛАВНАЯ ФУНКЦИЯ ---
 
 def stabilize_branches(detected_points):
-    """Стабилизирует обнаруженные точки веток (трекинг, фильтрация по частоте и объединение)."""
+    """Стабилизирует обнаруженные точки веток"""
     
-    # Предполагаем, что branch_candidates и frame_counter доступны глобально
     global branch_candidates, frame_counter 
     frame_counter += 1
 
-    # -----------------------------------------------------
-    ## 1. Обновляем кандидатов (Трекинг и Заморозка Центроида)
-    # -----------------------------------------------------
+
     for pt in detected_points:
         matched = False
         for c in branch_candidates:
-            # Матчинг: Если точка близка к c["pos"], она привязывается к существующему кандидату.
             if point_dist(pt, c["pos"]) < MERGE_DIST:
                 c["history"].append(frame_counter)
                 
@@ -186,9 +180,6 @@ def stabilize_branches(detected_points):
                 matched = True
                 break
         
-        # ЕСЛИ matched == False:
-        # Это означает, что pt находится ДАЛЕКО от ВСЕХ существующих c["pos"]. 
-        # Только в этом случае создается новый кандидат.
         if not matched:
             branch_candidates.append({
                 "pos": Point(pt.x, pt.y, pt.z),
@@ -197,9 +188,6 @@ def stabilize_branches(detected_points):
                 "is_frozen": False
             })
 
-    # -----------------------------------------------------
-    ## 2. Выбираем стабильные ветки по частоте
-    # -----------------------------------------------------
     stable = []
     for c in branch_candidates:
         hits_in_window = [
@@ -212,13 +200,8 @@ def stabilize_branches(detected_points):
         if frequency >= MIN_HIT_FREQUENCY:
             stable.append(c["pos"]) 
 
-    # -----------------------------------------------------
-    ## 3. Объединяем близкие точки (Финальная очистка дубликатов)
-    # -----------------------------------------------------
     merged_stable = []
     for pt in stable:
-        # Этот шаг гарантирует, что даже если два кандидата сблизились, 
-        # только один из них попадет в финальный список.
         if all(point_dist(pt, m) > MERGE_DIST for m in merged_stable):
             merged_stable.append(pt)
 
@@ -444,11 +427,10 @@ def analyze_and_publish(img):
 
     img_junctions = img.copy()
     for x, y in coords_branches:
-        cv2.circle(img_junctions, (y, x), 3, (0,0,255), -1)  # note: coords are (row,col)
+        cv2.circle(img_junctions, (y, x), 3, (0,0,255), -1)
 
     pub_junctions.publish(bridge.cv2_to_imgmsg(img_junctions, encoding="bgr8"))
 
-    # --- остальная часть твоего кода ---
     telem = get_telemetry(frame_id="aruco_map")
     roll, pitch, yaw = telem.roll, telem.pitch, telem.yaw
     R = create_rotation_matrix(roll, pitch, yaw)

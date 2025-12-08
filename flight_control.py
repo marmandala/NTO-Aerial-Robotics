@@ -166,7 +166,6 @@ def main():
                 rospy.loginfo(f"Vision Pipeline disabled.")
             except Exception as e:
                 rospy.logerr(f"Failed to set ROS parameter {VISION_ENABLE_PARAM}: {e}")
-            # -----------------------------------------------------------------
 
             rospy.loginfo("Mission complete. Returning home.")
             if not navigate_interruptible(HOME_POS['x'], HOME_POS['y'], HOME_POS['z'], speed=0.8):
